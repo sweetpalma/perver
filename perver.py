@@ -209,7 +209,8 @@ class PerverHandler:
 		client.get = self.parse_get(path)
 		
 		# Parsing POST:
-		client.post = self.parse_get('?' + content.decode(self.server.encoding))
+		post_args = content.decode(self.server.encoding).replace('+', ' ')
+		client.post = self.parse_get(''.join(['?', post_args]))
 		
 		# Working with cookies:
 		if 'Cookie' in args:
