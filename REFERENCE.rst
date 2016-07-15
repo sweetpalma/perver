@@ -274,3 +274,91 @@ Example
 	
   # Starting server:
   server.start()
+  
+================
+Complex Examples
+================
+
+Interactive chat using AJAX and jQuery
+--------------------------------------
+
+.. code-block:: python
+
+  # Connecting Perver:
+  from perver import Perver
+
+  # Importing JSON, used for AJAX posts:
+  from json import dumps as json_dump
+
+  # Making new instance:
+  server = Perver()
+
+  # Messages:
+  messages = []
+  # Notice: They will not be saved after shutting down the server.
+
+  # JQuery, used for AJAX requests:
+  jquery_url = '<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.0/jquery.min.js"></script>'
+
+  # Updating AJAX script using JQuery:
+  script = '''
+  <script>
+      update_time = 2000;
+      function update_messages() {
+  	    $.ajax({
+  	        type: 'GET',
+  	        url: '/messages',
+  		    success: function(data) {
+  			    html_msg = "";
+  			    msg = $.parseJSON(data);
+  			    for (var i = 0; i < msg.length; i++) {
+  				    html_msg = html_msg.concat('<b>');
+  				    html_msg = html_msg.concat(msg[i][0]);
+  			            html_msg = html_msg.concat(' - ');
+  				    html_msg = html_msg.concat(msg[i][1]);
+  				    html_msg = html_msg.concat('</b>:');
+  				    html_msg = html_msg.concat(msg[i][2]);
+  				    html_msg = html_msg.concat('<br>');
+  			    }
+  		        $('#messages').html(html_msg);
+  		    },
+              complete: function(data) {
+                  setTimeout(update_messages, update_time);
+              }
+          });
+      }
+      setTimeout(update_messages, update_time);
+  </script>
+  '''
+  
+  # Displaying form:
+  @server.get('/')
+  def show_messages(self):
+  
+      # Composing messages list into string with <br> separators:
+      html_messages = '<br>'.join(['<b>%s - %s</b>:%s' % info for info in messages])
+      html_messages = '<div id="messages">%s</div>' % html_messages
+	
+      # Building HTML:
+      return self.html(
+          head = '\r\n'.join(['<title>Perverted Chat!</title>', jquery_url, script]),
+          body = '\r\n'.join([self.form('/', 'post',
+              self.input('message', placeholder='Your message'),
+              self.input_submit('Send message!')
+          ), html_messages])
+      )
+      
+  # Retrieving messages list, used in ajax:
+  @server.get('/messages')
+  def get_messages(self):
+      return json_dump(messages)
+      
+  # Processing form:
+  @server.post('/')
+  def post_message(self):
+      if 'message' in self.post and len(self.post['message']) > 0:
+          messages.append((self.time, self.id, self.post['message']))
+      return self.redirect('/')
+      
+  # Starting server:
+  server.start()

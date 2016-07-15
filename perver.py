@@ -3,12 +3,13 @@
 # Perver - tiny Python 3 server for perverts.
 # Check README and LICENSE for details.
 from sys import platform as os_platform
-from hashlib import sha1 as sha
+from hashlib import sha1 as hash
 from urllib.parse import unquote
 from traceback import format_exc
 import concurrent.futures
 import logging as log
 import asyncio
+import base64
 import time
 import sys
 import os
@@ -33,12 +34,13 @@ class PerverHandler:
 	path_pattern = re.compile(r'(\{.+?\})')
 	
 	
-	# Retrieving client ID:
+	# Making client ID using cut SHA hash:
 	def get_id(self):
 		clnt = self.client
-		ident = str(clnt.ip) + str(clnt.agent)
-		return sha(ident.encode(self.server.encoding)).hexdigest()
-	
+		ident = (str(clnt.ip) + str(clnt.agent)).encode(self.server.encoding)
+		hashed = hash(ident).digest()[:self.server.length_id]
+		return base64.urlsafe_b64encode(hashed).decode(self.server.encoding)[:-2]
+
 	
 	# Power of regexp!
 	def check_route(self, path, map):
@@ -163,7 +165,7 @@ class PerverHandler:
 		if len(path) > 1 and len(get) == 2:
 			unq = lambda x: map(unquote, x)
 			vars = get[1].split(separator)
-			get = dict(tuple([unq(arg.split('=')) for arg in vars]))
+			get = dict(tuple([unq(arg.split('=')[:2]) for arg in vars]))
 			return get
 		else:
 			return {}
@@ -403,7 +405,7 @@ class PerverClient:
 		inputs = [list(inp.items()) for inp in inputs]
 		for input in inputs:
 			args = ' '.join('%s="%s"' % arg for arg in input)
-			html = ''.join([html, '<input %s><br>' % args])
+			html = '\r\n'.join([html, '<input %s><br>' % args])
 		return ''.join([html, '</form>'])
 		
 	
@@ -425,6 +427,10 @@ class Perver:
 	encoding = 'utf-8'
 	backlog  = 5
 	timeout  = 5
+	
+	# Client ID length:
+	length_id = 10
+	# I highly recommend not to change this value.
 	
 	# Routing paths:
 	route_get  = {}
