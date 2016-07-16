@@ -3,9 +3,10 @@
 # Perver - tiny Python 3 server for perverts.
 # Check README and LICENSE for details.
 from sys import platform as os_platform
-from hashlib import sha1 as hash
+from hashlib import sha1 as hash_id
 from urllib.parse import unquote
 from traceback import format_exc
+from functools import wraps
 import concurrent.futures
 import logging as log
 import asyncio
@@ -33,15 +34,13 @@ class PerverHandler:
 	# Path substitution pattern:
 	path_pattern = re.compile(r'(\{.+?\})')
 	
-	
 	# Making client ID using cut SHA hash:
 	def get_id(self):
 		clnt = self.client
 		ident = (str(clnt.ip) + str(clnt.agent)).encode(self.server.encoding)
-		hashed = hash(ident).digest()[:self.server.length_id]
+		hashed = hash_id(ident).digest()[:self.server.length_id]
 		return base64.urlsafe_b64encode(hashed).decode(self.server.encoding)[:-2]
 
-	
 	# Power of regexp!
 	def check_route(self, path, map):
 		
@@ -71,11 +70,9 @@ class PerverHandler:
 		# In case of fail:
 		return right_path
 
-		
 	# Appending certain header lines:
 	def form_header(self, arg, var):
 		self.header = self.header + arg + ': ' + var + '\r\n'
-		
 		
 	# Retrieving type:
 	def form_type(self, path):
@@ -87,7 +84,6 @@ class PerverHandler:
 		else:
 			return self.server.route_type['other']
 		
-		
 	# Sending file:
 	@asyncio.coroutine
 	def respond_file(self, path):
@@ -97,8 +93,7 @@ class PerverHandler:
 				yield from self.respond(200, file.read(), type=self.form_type(path), length=size)
 		except IOError:
 			yield from self.respond_error(404)
-			
-			
+				
 	# Forming error:
 	@asyncio.coroutine
 	def respond_error(self, number, custom=None):
@@ -110,11 +105,9 @@ class PerverHandler:
 		error_text = number in error and error[number] or 'Unknown Error'
 		yield from self.respond(number, str(number) + ' ' + error_text)
 		
-		
 	# Executing client script:
 	@asyncio.coroutine
 	def respond_script(self, script, keys={}):
-		script = asyncio.coroutine(script)
 		script_result = yield from script(self.client, **keys)
 		if not script_result:
 			script_result = b''
@@ -125,11 +118,9 @@ class PerverHandler:
 			type=self.client.mime
 		)
 	
-		
 	# Pure data response:
 	@asyncio.coroutine
 	def respond(self, status, content=b'', type='text/html', length=None, header={}):
-		
 		
 		# Forming header:
 		encoding = self.server.encoding
@@ -158,7 +149,6 @@ class PerverHandler:
 		self.writer.write(response)
 		self.writer.write_eof()
 	
-	
 	# Parsing GET:
 	def parse_get(self, path, separator='&'):
 		get = path.split('?')
@@ -169,7 +159,6 @@ class PerverHandler:
 			return get
 		else:
 			return {}
-		
 		
 	# Parsing client data:
 	@asyncio.coroutine
@@ -243,7 +232,6 @@ class PerverHandler:
 		
 		# Retrieving client:
 		return self.client
-	
 	
 	# Handling requests:
 	@asyncio.coroutine
@@ -327,17 +315,13 @@ class PerverHandler:
 		# Catching errors:
 		except:
 			log.warning('Exception caught!')
-			log.error(format_exc())
+			log.exception(format_exc())
 			yield from self.respond_error(500)
 			return
-			
-		
-		
 		
 # Script client:
 class PerverClient:
 	
-	# PARAMETERS:
 	# GET/POST arguments:
 	get  = {}
 	post = {}
@@ -348,13 +332,11 @@ class PerverClient:
 	cookie = {}
 	mime = 'text/html'
 	
-	
 	# Redirection:
 	def redirect(self, page):
 		self.header['Location'] = page
 		self.status = 302
 		return 'Redirecting...'
-	
 	
 	# Templating:
 	def template(self, text, **replace):
@@ -362,12 +344,10 @@ class PerverClient:
 			text = text.replace('{' + key + '}', value)
 		return text
 		
-	
 	# Rendering page:
 	def render(self, filename, **replace):
 		file = open(filename, 'r')
 		return self.template(file.read(), **replace)
-	
 	
 	# Retrieving file:
 	def file(self, filename):
@@ -375,21 +355,17 @@ class PerverClient:
 		file = open(filename, 'rb')
 		return file.read()
 	
-	
 	# Own header:
 	def set_header(self, key, value):
 		self.header[key] = value
-	
 	
 	# Cookies:
 	def set_cookie(self, name, value):
 		self.header['Set-Cookie'] = name + '=' + value +';'
 		
-		
 	# Status:
 	def set_status(self, status):
 		self.status = status
-		
 		
 	# Making HTML template:
 	def html(self, body, head='', doctype='html'):
@@ -397,7 +373,6 @@ class PerverClient:
 		head = '\r\n'.join(['<head>', head, '</head>'])
 		body = '\r\n'.join(['<body>', body, '</body>'])
 		return '\r\n'.join([doctype, head, body])
-		
 		
 	# Making forms:
 	def form(self, action, method, *inputs, id=''):
@@ -408,17 +383,14 @@ class PerverClient:
 			html = '\r\n'.join([html, '<input %s><br>' % args])
 		return ''.join([html, '</form>'])
 		
-	
 	# Part of the previous function:
 	def input(self, name, **args):
 		return dict({'name':name}, **args)
 	
-	
 	# Input submit:
 	def input_submit(self, value='Submit', **args):	
 		return {'type':'submit', 'value':value}
-
-		
+	
 # Perver Server itself:
 class Perver:
 
@@ -454,30 +426,36 @@ class Perver:
 	# Routing GET:
 	# DECORATOR:
 	def get(self, path):
-		def callback(func):
-			self.route_get[path] = func
-			return func
-		return callback
-	
+		def decorator(func):
+			@wraps(func)
+			def wrapper(*args, **kwds):
+				return asyncio.coroutine(func)(*args, **kwds)
+			self.route_get[path] = wrapper
+			return wrapper
+		return decorator
 	
 	# Routing POST:
 	# DECORATOR:
 	def post(self, path):
-		def callback(func):
-			self.route_post[path] = func
-			return func
-		return callback
-	
+		def decorator(func):
+			@wraps(func)
+			def wrapper(*args, **kwds):
+				return asyncio.coroutine(func)(*args, **kwds)
+			self.route_post[path] = wrapper
+			return wrapper
+		return decorator
 	
 	# Global routing:
 	# DECORATOR:
 	def route(self, path):
-		def callback(func):
-			self.route_post[path] = func
-			self.route_get[path] = func
-			return func
-		return callback
-		
+		def decorator(func):
+			@wraps(func)
+			def wrapper(*args, **kwds):
+				return asyncio.coroutine(func)(*args, **kwds)
+			self.route_post[path] = wrapper
+			self.route_get[path] = wrapper
+			return wrapper
+		return decorator
 		
 	# Adding static route:
 	def static(self, web, local):
@@ -488,7 +466,6 @@ class Perver:
 			local = local + '/'
 		self.route_static[web] = local
 	
-
 	# Starting:
 	def start(self, host='', port=80):
 	
@@ -503,9 +480,6 @@ class Perver:
 		# Catching socket errors:
 		try:
 		
-			# Establishing logging:
-			start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-			
 			# Starting server:
 			self._loop = asyncio.get_event_loop() 
 			self._server = asyncio.start_server(
@@ -516,20 +490,18 @@ class Perver:
 				reuse_address=True,
 			)
 			self._server = self._loop.run_until_complete(self._server)
+			start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 			log.info('Perver has started at ' + start_time + '.')
 			self._loop.run_forever()
 				
 		# Catched!
 		except OSError:
 			log.error('OS error, probably server is already running at that port.')
-			os.system('pause')
-	
 	
 	# Stop?
 	def stop(self):
 		self._server.close()
 		self._loop.stop()
-			
 			
 	# Main handler:
 	@asyncio.coroutine
@@ -537,15 +509,10 @@ class Perver:
 		try:
 			handler = PerverHandler()
 			yield from asyncio.wait_for(handler.handle_request(self, reader, writer), timeout=self.timeout)
-			del handler
 		except asyncio.TimeoutError:
-			log.error('Timed out.')
+			log.exception('Timed out.')
 		except KeyboardInterrupt:
-			log.error('Interrupted by user.')
+			log.exception('Interrupted by user.')
 			self.stop()
 		except SystemExit:
 			self.stop()
-		except:
-			log.warning('Exception caught!')
-			log.error(format_exc())
-			return
