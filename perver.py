@@ -164,6 +164,9 @@ class PerverHandler:
 		# Unquoting map:
 		unq = lambda x: map(unquote, x)
 		
+		# Replacing retarded pluses to spaces in path:
+		path = path.replace('+', ' ')
+		
 		# Working:
 		matched = [unq(x) for x in re.findall(pattern, path)]
 		return dict(matched)
