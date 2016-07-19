@@ -287,8 +287,8 @@ Processing POST data:
   
 Example #2
 ----------
-WARNING: Perver is not made for working with big files. That's a small framework for small projects that work with small files. Avoid using it for uploading files bigger than 100Mb.
-Uploading file to server directory:
+Uploading file to server directory.
+WARNING: Perver is not intended to work with big files. That's a small framework for small projects that work with small files. Avoid using it for uploading files bigger than 100Mb.
 
 .. code-block:: python
 
