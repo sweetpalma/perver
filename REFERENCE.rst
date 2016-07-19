@@ -148,13 +148,21 @@ set_status(self, status)
 ------------------------
 Sets custom response status, overriding default 200.
 
+set_mime(self, mime)
+------------------------
+Sets custom mime response.
+
 html(self, body, head='', doctype='html')
 -----------------------------------------
 HTML-correct template for nice pages.
 
-form(self, action, method, *inputs, id='')
-------------------------------------------
+form(self, action, method, *inputs, id='', multipart=False)
+-----------------------------------------------------------
 Used for building forms. Check `Forms <https://github.com/SweetPalma/Perver/blob/master/REFERENCE.rst#forms>`_ for more information.
+
+form_multipart(self, *args, **kargs)
+------------------------------------
+Works same as PerverClient.form, but with multipart argument set to True.
 
 input(self, name, **args)
 -------------------------
@@ -243,8 +251,10 @@ Forms
 =====
 Python-ish way to build forms. `Read more about HTML forms here <http://www.w3schools.com/html/html_forms.asp>`_. By using form_input you just build HTML form using Python dictionary, all input tags are `still as in HTML <http://www.w3schools.com/tags/tag_input.asp>`_. Take a look at example:
 
-Example
--------
+Example #1
+----------
+Processing POST data:
+
 .. code-block:: python
 
   # Connecting Perver:
@@ -275,12 +285,52 @@ Example
   # Starting server:
   server.start()
   
+Example #2
+----------
+WARNING: Perver is not made for working with big files. That's a small framework for small projects that work with small files. Avoid using it for uploading files bigger than 100Mb.
+Uploading file to server directory:
+
+.. code-block:: python
+
+  # Connecting Perver:
+  from perver import Perver
+
+  # Making new instance:
+  server = Perver()
+
+  # Displaying form:
+  @server.get('/')
+  def test(self):
+      status = 'status' in self.get and self.get['status'] or ''
+      return self.html(
+          status + ' ' + self.form_multipart('/', 'post',
+              self.input('file', type='file'),
+              self.input_submit()
+          )
+      )
+	
+  # Uploading file:
+  @server.post('/')
+  def kek(self):
+      if 'file' in self.post:
+          file_post = self.post['file']
+          with open(file_post['filename'], 'wb') as file:
+              file.write(file_post['file'])
+              file.close()
+          return self.redirect('/?status=Success.')
+      else:
+          return self.redirect('/?status=Fail.')
+
+  # Starting server:
+  server.start()
+  
 ================
 Complex Examples
 ================
 
 Interactive chat using AJAX and jQuery
 --------------------------------------
+Chat that updates using AJAX after receiving new messages.
 
 .. code-block:: python
 
@@ -305,23 +355,18 @@ Interactive chat using AJAX and jQuery
   <script>
       update_time = 2000;
       function update_messages() {
-  	    $.ajax({
-  	        type: 'GET',
-  	        url: '/messages',
-  		    success: function(data) {
-  			    html_msg = "";
-  			    msg = $.parseJSON(data);
-  			    for (var i = 0; i < msg.length; i++) {
-  				    html_msg = html_msg.concat('<b>');
-  				    html_msg = html_msg.concat(msg[i][0]);
-  			            html_msg = html_msg.concat(' - ');
-  				    html_msg = html_msg.concat(msg[i][1]);
-  				    html_msg = html_msg.concat('</b>:');
-  				    html_msg = html_msg.concat(msg[i][2]);
-  				    html_msg = html_msg.concat('<br>');
-  			    }
-  		        $('#messages').html(html_msg);
-  		    },
+          $.ajax({
+              type: 'GET',
+              url: '/messages',
+              success: function(data) {
+                  html_msg = "";
+                  msg = $.parseJSON(data);
+                  for (var i = 0; i < msg.length; i++) {
+                      single_msg = ['<b>', msg[i][0], '-', msg[i][1], '</b>: ', msg[i][2], '<br>'];
+                      html_msg = html_msg.concat(single_msg.join(''));
+                  }
+                  $('#messages').html(html_msg);
+              },
               complete: function(data) {
                   setTimeout(update_messages, update_time);
               }

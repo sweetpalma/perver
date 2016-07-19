@@ -5,6 +5,7 @@
 from sys import platform as os_platform
 from hashlib import sha1 as hash_id
 from urllib.parse import unquote
+from mimetypes import guess_type
 from traceback import format_exc
 from functools import wraps
 import concurrent.futures
@@ -19,13 +20,7 @@ import re
 
 # Version control:
 __author__ = 'SweetPalma'
-__version__ = '0.2'
-
-
-# Checking versions:
-# 'yield from' will raise error anyway.
-if sys.version_info < (3, 4):
-	raise 'Asyncio requires Python 3.4.'
+__version__ = '0.25'
 
 
 # Handling HTTP requests:
@@ -35,11 +30,11 @@ class PerverHandler:
 	path_pattern = re.compile(r'(\{.+?\})')
 	
 	# Making client ID using cut SHA hash:
-	def get_id(self):
-		clnt = self.client
+	def get_id(self, clnt):
 		ident = (str(clnt.ip) + str(clnt.agent)).encode(self.server.encoding)
 		hashed = hash_id(ident).digest()[:self.server.length_id]
-		return base64.urlsafe_b64encode(hashed).decode(self.server.encoding)[:-2]
+		cook = base64.urlsafe_b64encode(hashed).decode(self.server.encoding)
+		return cook[:-2]
 
 	# Power of regexp!
 	def check_route(self, path, map):
@@ -76,13 +71,11 @@ class PerverHandler:
 		
 	# Retrieving type:
 	def form_type(self, path):
-		filename, extension = os.path.splitext(path)
-		if extension in self.server.route_type:
-			return self.server.route_type[extension]
-		elif extension == '':
-			return 'text/html'
+		type = guess_type(path)[0]
+		if type:
+			return type
 		else:
-			return self.server.route_type['other']
+			return 'text/html'
 		
 	# Sending file:
 	@asyncio.coroutine
@@ -90,7 +83,12 @@ class PerverHandler:
 		try:
 			with open(path, "rb") as file:
 				size = os.path.getsize(path)
-				yield from self.respond(200, file.read(), type=self.form_type(path), length=size)
+				yield from self.respond(
+					200, 
+					file.read(), 
+					type=self.form_type(path), 
+					length=size
+				)
 		except IOError:
 			yield from self.respond_error(404)
 				
@@ -125,9 +123,15 @@ class PerverHandler:
 		# Forming header:
 		encoding = self.server.encoding
 		self.header = 'HTTP/1.1 ' + str(status) + '\r\n'
-		self.form_header('Content-Type', type + ';charset=' + encoding)
 		self.form_header('Accept-Charset', encoding)
 		self.form_header('Server', 'Perver/' + __version__)
+		
+		# Setting mime type and encoding:
+		if type.split('/')[0] == 'text':
+			ctype = type + ';charset=' + encoding
+		else:
+			ctype = type
+		self.form_header('Content-Type', ctype)
 		
 		# Working with custom headers:
 		for key, value in header.items():
@@ -149,90 +153,155 @@ class PerverHandler:
 		self.writer.write(response)
 		self.writer.write_eof()
 	
-	# Parsing GET:
-	def parse_get(self, path, separator='&'):
-		get = path.split('?')
-		if len(path) > 1 and len(get) == 2:
-			unq = lambda x: map(unquote, x)
-			vars = get[1].split(separator)
-			get = dict(tuple([unq(arg.split('=')[:2]) for arg in vars]))
-			return get
+	# Parsing GET and COOKIES:
+	@asyncio.coroutine
+	def parse(self, path):
+	
+		# Preparing %key%=%value% regex:
+		get_word = '[^=;&?]'
+		pattern = '(%s+)=(%s+)' % (get_word, get_word)
+
+		# Unquoting map:
+		unq = lambda x: map(unquote, x)
+		
+		# Working:
+		matched = [unq(x) for x in re.findall(pattern, path)]
+		return dict(matched)
+			
+	# Parsing POST:
+	@asyncio.coroutine
+	def parse_post(self, content, type, boundary):
+	
+		# Establishing default encoding:
+		encoding = self.server.encoding
+
+		# Parsing multipart:
+		if type == 'multipart/form-data':
+			fields = content.split(boundary)
+			fields_dict = {}
+			for field in fields:
+				field_rows = field.split(b'\r\n\r\n')
+				if len(field_rows) == 2:
+				
+					# Basic header and value:
+					header, value = field_rows
+					value = value[:-2]
+					
+					# Decoding key:
+					key = re.findall(b';[ ]*name="([^;]+)"', header)[0]
+					key = key.decode(encoding)
+					
+					# Checking content-type:
+					ctype = re.search(b'Content-Type: ([^;]+)$', header)
+					
+					# File upload:
+					if ctype:
+						if value == b'' or value == b'\r\n':
+							continue
+						ctype = ctype.group()
+						fname = re.findall(b';[ ]*filename="([^;]+)"', header)
+						fname = len(fname) == 1 and fname[0] or b'unknown'
+						fields_dict[key] = {
+							'filename': fname.decode(encoding),
+							'mime': ctype.decode(encoding),
+							'file': value,
+						}
+						
+					# Basic field:
+					else:
+						fields_dict[key] = value.decode(encoding)
+						
+			return fields_dict
+		
+		# Parsing average urlencoded:
 		else:
-			return {}
+			if isinstance(content, bytes):
+				content = content.decode(encoding)
+			return self.parse(content)
+		
 		
 	# Parsing client data:
 	@asyncio.coroutine
-	def parse(self, header, content=b''):
+	def build_client(self, header_raw, content_raw=b''):
 	
-		# Connecting client:
-		client = PerverClient()
-		
-		# Saving:
-		client.byte_header = header
-		client.byte_content = content
-		
+		# Checking value in dict:
+		def safe_dict(dictionary, value, default):
+			if value in dictionary:
+				return dictionary[value]
+			else:
+				return default
+				
 		# Decoding:
-		header = header.decode(self.server.encoding)
-
-		# Encoding arguments:
-		args = [tuple(arg.split(': ')) for arg in header.split('\r\n')]
+		try:
 		
-		# Invalid header:
-		if len(args) < 3:
-			self.respond_error(400)
-			return
+			# Decoding header:
+			header_decoded = header_raw.decode(self.server.encoding)
 		
-		# Request type, path and version:
-		client.type, path, client.version = args[0][0].split(' ')
-		client.path = unquote(path.split('?')[0])
-		client.path_dir = '/'.join(client.path.split('/')[:-1])
-		args = dict(args[1:-2])
-		
-		# Fixing path dir:
-		if client.path_dir == '':
-			client.path_dir = '/'
-		
-		# Small variables:
-		client.agent = 'User-Agent' in args and args['User-Agent'] or 'Bot'
-		client.mime = self.form_type(client.path)
-		
-		# Parsing GET:
-		client.get = self.parse_get(path)
-		
-		# Parsing POST:
-		post_args = content.decode(self.server.encoding).replace('+', ' ')
-		client.post = self.parse_get(''.join(['?', post_args]))
-		
-		# Working with cookies:
-		if 'Cookie' in args:
-			cookie = args['Cookie'].replace('; ', ';')
-			client.cookie = self.parse_get('?' + cookie, separator=';')
-		
-		# Arguments:
-		client.time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
-		client.ip = self.ip
-		client.port = self.port
-		
-		# Making script client:
-		self.client = client
-		
-		# Working with client ID:
-		client.id = self.get_id()
-		
-		# Adding client to server database:
-		if not client.id in self.server.client:
-			self.server.client[client.id] = {}
+			# Three basic values: request type, path and version:
+			pattern = '^(GET|POST) ([A-Za-z0-9_.-~?&%]+) (HTTP/1.1|HTTP/1.0)'
+			type, path, version = re.findall(pattern, header_decoded)[0]
 			
-		# Setting cookie:
-		self.client.header['Set-Cookie'] = 'id=' + client.id
-		# It could be overriden later.
-			
-		# Client containers:
-		client.container = self.server.client[client.id]
+			# Splitting GET and PATH:
+			if '?' in path:
+				path, GET = path.split('?')
+			else:
+				GET = ''
 		
-		# Retrieving client:
-		return self.client
-	
+			# Raw header to header dictionary:
+			pattern = '([^:]+):[ ]*(.+)\r\n'
+			header = dict(re.findall(pattern, header_decoded))
+			
+			# Basic client variables:
+			client = PerverClient()
+			client.version = version
+			client.type, client.path = type, unquote(path)
+			client.path_dir = '/'.join(unquote(path).split('/')[:-1])
+			
+			# Client header:
+			client.header_raw, client.content_raw = header_raw, content_raw
+			client.content_type = safe_dict(header, 'Content-Type', '')
+			client.content_length = safe_dict(header, 'Content-Length', 0)
+			client.agent = safe_dict(header, 'User-Agent', 'Unknown')
+			client.mime = self.form_type(client.path)
+			client.form_type = client.content_type.split(';')[0]
+			
+			# Server client values:
+			client.ip, client.port, client.time = self.ip, self.port, self.time
+			client.id = self.get_id(client)
+			
+			# POST boundary:
+			boundary = re.findall('boundary=(-*[0-9]*)', client.content_type)
+			if len(boundary) > 0:
+				boundary = boundary[0].encode(self.server.encoding)
+			else:
+				boundary = b''
+			
+			# POST/GET/COOKIES:
+			client.get =     yield from self.parse(GET)
+			client.post =    yield from self.parse_post(content_raw, client.form_type, boundary)
+			client.cookies = yield from self.parse(safe_dict(header, 'Cookie', ''))
+			
+			# Client ID cookie, can be overrided later:
+			client.header['Set-Cookie'] = 'id=' + client.id
+			
+			# Client server-side container:
+			if not client.id in self.server.client:
+				self.server.client[client.id] = {}
+			client.container = self.server.client[client.id]
+			
+			# Fixing client path dir:
+			if client.path_dir == '':
+				client.path_dir = '/'
+			
+			# Done!
+			return client
+			
+		# In case of fail:
+		except BaseException as exc:
+			log.warning('Error parsing user request.')
+			yield from self.respond_error(400) 
+			raise exc
+			
 	# Handling requests:
 	@asyncio.coroutine
 	def handle_request(self, server, reader, writer):
@@ -249,6 +318,7 @@ class PerverHandler:
 		self.port = port
 		self.reader = reader
 		self.writer = writer
+		self.time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 		
 		# Reading header:
 		header, length = b'', 0
@@ -266,23 +336,31 @@ class PerverHandler:
 		# Reading content:
 		content = b''
 		if length > 0:
-			content = yield from reader.read(length)
+			content = yield from reader.readexactly(length)
+			
+		# Client info:
+		client_info = ' '.join([
+			self.time,
+			self.ip,
+		])
 		
 		# Parsing data:
-		client = yield from self.parse(header, content)
+		self.client = yield from self.build_client(header, content)
+		client = self.client
 		
 		# In case of disconnection:
 		if not client:
+			log.info(client_info + ' CLOSED CONNECTION')
 			self.writer.close()
 			return
-		
-		# Logging:
-		log.info(' '.join([
-			client.time, 
-			client.type, 
-			client.path, 
-			client.ip
-		]))
+			
+		# Logging full information:
+		else:
+			client_info = client_info + ' ' + ' '.join([
+				client.type,
+				client.path,
+			])
+			log.info(client_info)
 		
 		# Finding correct response:
 		try:
@@ -308,17 +386,12 @@ class PerverHandler:
 			yield from self.respond_error(404)
 			return
 			
-		# Global errors:
-		except (KeyboardInterrupt, SystemExit) as exception:
-			raise exception
-				
-		# Catching errors:
-		except:
-			log.warning('Exception caught!')
-			log.exception(format_exc())
+		# Timeout/Cancelled:
+		except concurrent.futures._base.CancelledError:
+			log.warning('Task was cancelled.')
 			yield from self.respond_error(500)
-			return
-		
+			pass
+			
 # Script client:
 class PerverClient:
 	
@@ -351,7 +424,7 @@ class PerverClient:
 	
 	# Retrieving file:
 	def file(self, filename):
-		self.mime = 'application'
+		self.mime = guess_type(filename)[0]
 		file = open(filename, 'rb')
 		return file.read()
 	
@@ -367,6 +440,10 @@ class PerverClient:
 	def set_status(self, status):
 		self.status = status
 		
+	# Mime:
+	def set_mime(self, mime):
+		self.mime = mime
+		
 	# Making HTML template:
 	def html(self, body, head='', doctype='html'):
 		doctype = '<!DOCTYPE %s>' % doctype
@@ -375,13 +452,27 @@ class PerverClient:
 		return '\r\n'.join([doctype, head, body])
 		
 	# Making forms:
-	def form(self, action, method, *inputs, id=''):
-		html = '<form action="%s" method="%s" id="%s">' % (action, method, id)
+	def form(self, action, method, *inputs, id='', multipart=False):
+		
+		# Loading files or average form:
+		if multipart:
+			enctype='multipart/form-data'
+		else:
+			enctype='application/x-www-form-urlencoded'
+	
+		# Making form:
+		form_desc = (action, method, id, enctype)
+		html = '<form action="%s" method="%s" id="%s" enctype="%s">' % form_desc
 		inputs = [list(inp.items()) for inp in inputs]
 		for input in inputs:
 			args = ' '.join('%s="%s"' % arg for arg in input)
 			html = '\r\n'.join([html, '<input %s><br>' % args])
 		return ''.join([html, '</form>'])
+		
+	# Multipart form:
+	def form_multipart(self, *args, **kargs):
+		kargs['multipart'] = True
+		return self.form(*args, **kargs)
 		
 	# Part of the previous function:
 	def input(self, name, **args):
@@ -390,7 +481,8 @@ class PerverClient:
 	# Input submit:
 	def input_submit(self, value='Submit', **args):	
 		return {'type':'submit', 'value':value}
-	
+
+		
 # Perver Server itself:
 class Perver:
 
@@ -398,7 +490,7 @@ class Perver:
 	# Main server values:
 	encoding = 'utf-8'
 	backlog  = 5
-	timeout  = 5
+	timeout  = 30
 	
 	# Client ID length:
 	length_id = 10
@@ -408,16 +500,6 @@ class Perver:
 	route_get  = {}
 	route_post = {}
 	route_static = {}
-	
-	# MIME types:
-	route_type = {
-		'.html': 'text/html',
-		'.txt':  'text/plain',
-		'.jpg':  'image/jpeg',
-		'.png':  'image/png',
-		'.css':  'text/css',
-		'other': 'application'
-	}
 	
 	# Active clients list:
 	client = {}
@@ -509,10 +591,17 @@ class Perver:
 		try:
 			handler = PerverHandler()
 			yield from asyncio.wait_for(handler.handle_request(self, reader, writer), timeout=self.timeout)
-		except asyncio.TimeoutError:
-			log.exception('Timed out.')
+		except (asyncio.TimeoutError):
+			log.warning('Timed out.')
 		except KeyboardInterrupt:
-			log.exception('Interrupted by user.')
+			log.warning('Interrupted by user.')
 			self.stop()
 		except SystemExit:
 			self.stop()
+		except:
+			log.warning('Exception caught! \r\n' + format_exc())
+			
+# Not standalone:
+if __name__ == '__main__':
+	print('Perver is not a standalone application. Use it as framework.')
+	print('Check "github.com/SweetPalma/Perver" for details.')
