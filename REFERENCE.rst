@@ -21,6 +21,14 @@ timeout
 -------
 Client request timeout. Default is 5 seconds.
 
+get_max
+-------
+Maximal size of client GET request. Default is set to 8192 bytes.
+
+post_max
+--------
+Maximal size of client POST request. Default is set to 1024 * 1024 * 100 = 100 Mbytes.
+
 __init__(self)
 --------------
 Makes new Perver instance. Doesn't take any parameters.

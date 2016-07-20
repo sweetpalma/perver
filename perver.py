@@ -323,29 +323,54 @@ class PerverHandler:
 		self.writer = writer
 		self.time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 		
-		# Reading header:
-		header, length = b'', 0
-		while True:
-			try:
-				line = yield from reader.readline()
-				if line == b'\r\n' or not line:
-					break
-				if line.startswith(b'Content-Length'):
-					length = int(line.split(b':')[1])
-				header = header + line
-			except:
-				break
-			
-		# Reading content:
-		content = b''
-		if length > 0:
-			content = yield from reader.readexactly(length)
-			
-		# Client info:
+		# Client info, used in logging:
 		client_info = ' '.join([
 			self.time,
 			self.ip,
 		])
+		
+		# Reading header:
+		error = ''
+		header, length = b'', 0
+		while True:
+			try:
+			
+				# Reading:
+				line = yield from reader.readline()
+				
+				# Setting request type and maximal request size:
+				if header == b'':
+					if line.startswith(b'POST'):
+						request_type = b'POST'
+						request_max = self.server.post_max	
+					else:
+						request_type = b'GET'
+						request_max = self.server.get_max
+				
+				# Setting break:
+				if line == b'\r\n' or not line:
+					break
+					
+				# Reading content length:
+				if line.startswith(b'Content-Length'):
+					length = int(line.split(b':')[1])
+					
+				# Reading header:
+				header = header + line
+				
+			except:
+				break
+		
+		# Reading content:
+		content = b''
+		if length > 0 and length < request_max:
+			content = yield from reader.readexactly(length)
+			
+		# Close connection in case of big file:
+		elif length > request_max:
+			log.info(client_info + ' REQUEST IS TOO BIG')
+			self.writer.close()
+			return
 		
 		# Parsing data:
 		self.client = yield from self.build_client(header, content)
@@ -494,6 +519,10 @@ class Perver:
 	encoding = 'utf-8'
 	backlog  = 5
 	timeout  = 30
+	
+	# Maximal requests length:
+	get_max  = 1024 * 8
+	post_max = 1024 * 1024 * 100
 	
 	# Client ID length:
 	length_id = 10
