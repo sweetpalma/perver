@@ -210,10 +210,10 @@ Example
   # Starting server:
   server.start()
   
-====================
-perver.PerverHandler
-====================
-You don't really need to use this one. That's internal class that is used only for handling low-level HTTP data.
+============================================
+perver.PerverHandler, perver.PerverException
+============================================
+You don't really need to use this two. That's internal classes that is used only for handling low-level HTTP data and internal exceptioning.
   
 =======
 Routing
