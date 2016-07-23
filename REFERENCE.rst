@@ -43,7 +43,7 @@ Stops the Perver. Doesn't take any parameters.
 
 static(self, web, local)
 ------------------------
-Used for binding certain WEB path file request to certain LOCAL file directory. For example, if you will set WEB and LOCAL to '/', request like 'yoursite/test.png' will seek for 'test.png' in your server directory.
+Uses local path for serving static files for web requests. For example, if you will set WEB and LOCAL to '/', request like 'yoursite/test.png' will seek for 'test.png' in your server directory.
 
 get(self, path)
 ---------------
@@ -134,15 +134,15 @@ Redirects client to a certain PAGE, using 302 status code.
 
 template(self, text, **replace)
 -------------------------------
-Used in templating - returns TEXT with any {occurence} will be REPLACEd. For example, if you have text 'Hello, {name}!' and REPLACE is {'name':'world'} - you will get the text 'Hello, world!'.
+Used in templating - works same as str.format.
 
 render(self, filename, **replace)
 ---------------------------------
-Same as template, but used in files. Returns file with FILENAME with any {occurence} REPLACEd.
+Same as template, but used in files. Returns text file.
 
 file(self, filename)
 --------------------
-Returns file with FILENAME, binary.
+Returns file, binary.
 
 set_header(self, key, value)
 ----------------------------
@@ -308,7 +308,7 @@ WARNING: Perver is not intended to work with big files. That's a small framework
 
   # Displaying form:
   @server.get('/')
-  def test(self):
+  def file_form(self):
       status = 'status' in self.get and self.get['status'] or ''
       return self.html(
           status + ' ' + self.form_multipart('/', 'post',
@@ -319,7 +319,7 @@ WARNING: Perver is not intended to work with big files. That's a small framework
 	
   # Uploading file:
   @server.post('/')
-  def kek(self):
+  def file_upload(self):
       if 'file' in self.post:
           file_post = self.post['file']
           with open(file_post['filename'], 'wb') as file:
@@ -370,7 +370,7 @@ Chat that updates using AJAX after receiving new messages.
                   html_msg = "";
                   msg = $.parseJSON(data);
                   for (var i = 0; i < msg.length; i++) {
-                      single_msg = ['<b>', msg[i][0], '-', msg[i][1], '</b>: ', msg[i][2], '<br>'];
+                      single_msg = ['<b>', msg[i][0], ' - ', msg[i][1], '</b>: ', msg[i][2], '<br>'];
                       html_msg = html_msg.concat(single_msg.join(''));
                   }
                   $('#messages').html(html_msg);

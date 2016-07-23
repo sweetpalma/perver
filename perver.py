@@ -29,12 +29,13 @@ class PerverHandler:
 	# Path substitution pattern:
 	path_pattern = re.compile(r'(\{.+?\})')
 	
-	# Making client ID using cut SHA hash:
+	# Making client ID using cut SHA hash on client IP and User-Agent:
 	def get_id(self, clnt):
-		ident = (str(clnt.ip) + str(clnt.agent)).encode(self.server.encoding)
-		hashed = hash_id(ident).digest()[:self.server.length_id]
-		cook = base64.urlsafe_b64encode(hashed).decode(self.server.encoding)
-		return cook[:-2]
+		ident = str(clnt.ip) + str(clnt.agent)
+		ident_encoded = ident.encode(self.server.encoding)
+		hashed = hash_id(ident_encoded).digest()[:self.server.length_id]
+		cooked = base64.urlsafe_b64encode(hashed).decode(self.server.encoding)
+		return cooked[:-2] # Removed two last minuses for better readibility.
 
 	# Power of regexp!
 	def check_route(self, path, map):
@@ -44,7 +45,7 @@ class PerverHandler:
 			return (map[path], {})
 			
 		# Path with substitutions:
-		right_path, groups = False, sys.maxsize
+		right_path, groups = None, sys.maxsize
 		for route in map:
 		
 			# Removing retarded slash in the end of path:
@@ -54,7 +55,7 @@ class PerverHandler:
 			path_pattern = '^' + self.path_pattern.sub('([^/]+)', route) + '$'
 			matched = re.match(path_pattern, path)
 			
-			# Testing:
+			# Testing route:
 			if matched:
 				keys = [key[1:-1] for key in self.path_pattern.findall(route)]
 				values = list(matched.groups())
@@ -70,12 +71,9 @@ class PerverHandler:
 		self.header = self.header + arg + ': ' + var + '\r\n'
 		
 	# Retrieving type:
-	def form_type(self, path):
+	def get_mime(self, path):
 		type = guess_type(path)[0]
-		if type:
-			return type
-		else:
-			return 'text/html'
+		return type or 'text/html'
 		
 	# Sending file:
 	@asyncio.coroutine
@@ -84,15 +82,16 @@ class PerverHandler:
 			with open(path, "rb") as file:
 				size = os.path.getsize(path)
 				yield from self.respond(
-					200, 
-					file.read(), 
-					type=self.form_type(path), 
-					length=size
+					status = 200, 
+					content = file.read(), 
+					type = self.get_mime(path), 
+					length = size
 				)
+		# No file found:
 		except IOError:
 			yield from self.respond_error(404)
 				
-	# Forming error:
+	# Sending error message:
 	@asyncio.coroutine
 	def respond_error(self, number, custom=None):
 		error = {
@@ -103,17 +102,15 @@ class PerverHandler:
 		error_text = number in error and error[number] or 'Unknown Error'
 		yield from self.respond(number, str(number) + ' ' + error_text)
 		
-	# Executing client script:
+	# Executing client script and sending it response:
 	@asyncio.coroutine
 	def respond_script(self, script, keys={}):
-		script_result = yield from script(self.client, **keys)
-		if not script_result:
-			script_result = b''
+		script_result = (yield from script(self.client, **keys)) or b''
 		yield from self.respond(
-			self.client.status, 
-			script_result,
-			header=self.client.header, 
-			type=self.client.mime
+			status = self.client.status, 
+			content = script_result,
+			header = self.client.header, 
+			type = self.client.mime
 		)
 	
 	# Pure data response:
@@ -126,8 +123,8 @@ class PerverHandler:
 		self.form_header('Accept-Charset', encoding)
 		self.form_header('Server', 'Perver/' + __version__)
 		
-		# Setting mime type and encoding:
-		if type.split('/')[0] == 'text':
+		# Setting mime type (and encoding for text):
+		if type.startswith('text/'):
 			ctype = type + ';charset=' + encoding
 		else:
 			ctype = type
@@ -137,7 +134,7 @@ class PerverHandler:
 		for key, value in header.items():
 			self.form_header(key, value)
 			
-		# Encoding content:
+		# Encoding unicode content:
 		if not isinstance(content, bytes):
 			content = content.encode(encoding)
 			
@@ -171,7 +168,7 @@ class PerverHandler:
 		matched = [unq(x) for x in re.findall(pattern, path)]
 		return dict(matched)
 			
-	# Parsing POST:
+	# Parsing POST multipart:
 	@asyncio.coroutine
 	def parse_post(self, content, type, boundary):
 	
@@ -180,13 +177,17 @@ class PerverHandler:
 
 		# Parsing multipart:
 		if type == 'multipart/form-data':
+			
+			# Splitting request to fields:
 			fields = content.split(boundary)
 			fields_dict = {}
+			
+			# Turning `em to dictionary:
 			for field in fields:
+			
+				# Checking:
 				field_rows = field.split(b'\r\n\r\n')
 				if len(field_rows) == 2:
-				
-					# Basic header and value:
 					header, value = field_rows
 					value = value[:-2]
 					
@@ -197,7 +198,7 @@ class PerverHandler:
 					# Checking content-type:
 					ctype = re.search(b'Content-Type: ([^;]+)$', header)
 					
-					# File upload:
+					# File upload field:
 					if ctype:
 						if value == b'' or value == b'\r\n':
 							continue
@@ -210,7 +211,7 @@ class PerverHandler:
 							'file': value,
 						}
 						
-					# Basic field:
+					# Text field:
 					else:
 						fields_dict[key] = value.decode(encoding)
 						
@@ -222,12 +223,11 @@ class PerverHandler:
 				content = content.decode(encoding)
 			return self.parse(content)
 		
-		
 	# Parsing client data:
 	@asyncio.coroutine
 	def build_client(self, header_raw, content_raw=b''):
 	
-		# Checking value in dict:
+		# Safe dict values:
 		def safe_dict(dictionary, value, default):
 			if value in dictionary:
 				return dictionary[value]
@@ -265,7 +265,7 @@ class PerverHandler:
 			client.content_type = safe_dict(header, 'Content-Type', '')
 			client.content_length = safe_dict(header, 'Content-Length', 0)
 			client.agent = safe_dict(header, 'User-Agent', 'Unknown')
-			client.mime = self.form_type(client.path)
+			client.mime = self.get_mime(client.path)
 			client.form_type = client.content_type.split(';')[0]
 			
 			# Server client values:
@@ -330,7 +330,6 @@ class PerverHandler:
 		])
 		
 		# Reading header:
-		error = ''
 		header, length = b'', 0
 		while True:
 			try:
@@ -363,7 +362,7 @@ class PerverHandler:
 		
 		# Reading content:
 		content = b''
-		if length > 0 and length < request_max:
+		if 0 < length < request_max:
 			content = yield from reader.readexactly(length)
 			
 		# Close connection in case of big file:
@@ -435,45 +434,52 @@ class PerverClient:
 	
 	# Redirection:
 	def redirect(self, page):
+		""" Redirects client to a certain page using 302 status code. """
 		self.header['Location'] = page
 		self.status = 302
 		return 'Redirecting...'
 	
 	# Templating:
 	def template(self, text, **replace):
-		for key, value in replace.items():
-			text = text.replace('{' + key + '}', value)
-		return text
+		""" Used in templating - works same as str.format. """
+		return text.format(**replace)
 		
 	# Rendering page:
 	def render(self, filename, **replace):
+		""" Same as template, but used in files. Returns templated file. """
 		file = open(filename, 'r')
 		return self.template(file.read(), **replace)
 	
 	# Retrieving file:
 	def file(self, filename):
+		""" Simply returns file contents, binary. """
 		self.mime = guess_type(filename)[0]
 		file = open(filename, 'rb')
 		return file.read()
 	
 	# Own header:
 	def set_header(self, key, value):
+		""" Sets custom client HTTP header. """
 		self.header[key] = value
 	
 	# Cookies:
 	def set_cookie(self, name, value):
+		""" Sets custom client cookie, overriding default Perver ID Cookie. """
 		self.header['Set-Cookie'] = name + '=' + value +';'
 		
 	# Status:
 	def set_status(self, status):
+		""" Sets custom response status, overriding default 200. """
 		self.status = status
 		
 	# Mime:
 	def set_mime(self, mime):
+		""" Sets custom mime response. """
 		self.mime = mime
 		
 	# Making HTML template:
 	def html(self, body, head='', doctype='html'):
+		""" HTML-correct template for nice pages. """
 		doctype = '<!DOCTYPE %s>' % doctype
 		head = '\r\n'.join(['<head>', head, '</head>'])
 		body = '\r\n'.join(['<body>', body, '</body>'])
@@ -481,14 +487,11 @@ class PerverClient:
 		
 	# Making forms:
 	def form(self, action, method, *inputs, id='', multipart=False):
-		
-		# Loading files or average form:
+		""" Used for building forms. """
 		if multipart:
 			enctype='multipart/form-data'
 		else:
 			enctype='application/x-www-form-urlencoded'
-	
-		# Making form:
 		form_desc = (action, method, id, enctype)
 		html = '<form action="%s" method="%s" id="%s" enctype="%s">' % form_desc
 		inputs = [list(inp.items()) for inp in inputs]
@@ -499,16 +502,19 @@ class PerverClient:
 		
 	# Multipart form:
 	def form_multipart(self, *args, **kargs):
+		""" Works same as previous, but with multipart argument set to True."""
 		kargs['multipart'] = True
 		return self.form(*args, **kargs)
 		
 	# Part of the previous function:
-	def input(self, name, **args):
-		return dict({'name':name}, **args)
+	def input(self, name, **kargs):
+		""" Single form input. """
+		return dict(name=name, **kargs)
 	
 	# Input submit:
-	def input_submit(self, value='Submit', **args):	
-		return {'type':'submit', 'value':value}
+	def input_submit(self, value='Submit', **kargs):
+		""" Form submit button. """
+		return dict(type='submit', value=value, **kargs)
 
 		
 # Perver Server itself:
@@ -540,6 +546,7 @@ class Perver:
 	# Routing GET:
 	# DECORATOR:
 	def get(self, path):
+		""" Binds all GET requests from path to certain function. """
 		def decorator(func):
 			@wraps(func)
 			def wrapper(*args, **kwds):
@@ -551,6 +558,7 @@ class Perver:
 	# Routing POST:
 	# DECORATOR:
 	def post(self, path):
+		""" Binds all POST requests from path to certain function.  """
 		def decorator(func):
 			@wraps(func)
 			def wrapper(*args, **kwds):
@@ -562,6 +570,7 @@ class Perver:
 	# Global routing:
 	# DECORATOR:
 	def route(self, path):
+		""" Binds all POST/GET requests from path to certain function. """
 		def decorator(func):
 			@wraps(func)
 			def wrapper(*args, **kwds):
@@ -573,6 +582,7 @@ class Perver:
 		
 	# Adding static route:
 	def static(self, web, local):
+		""" Uses local path for serving static files for web requests. """
 		local = local.replace('\\', '/')
 		if not (local.startswith('/') and os.path.isabs(local)):
 			local = '/' + local
@@ -582,19 +592,17 @@ class Perver:
 	
 	# Starting:
 	def start(self, host='', port=80):
-	
-		# Configuring:
+		""" Starts the (mostly) infinite loop of server. """
+		# Configuring output:
 		self.host, self.port = host, port
 		log.basicConfig(level=log.INFO, format='%(levelname)s: %(message)s')
 		
-		# Nice header:
+		# Nice header for Windows:
 		if os_platform == 'win32':
 			os.system('title Perver v' + __version__)
 		
-		# Catching socket errors:
+		# Trying running:
 		try:
-		
-			# Starting server:
 			self._loop = asyncio.get_event_loop() 
 			self._server = asyncio.start_server(
 				self.handler, 
@@ -607,17 +615,18 @@ class Perver:
 			start_time = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
 			log.info('Perver has started at ' + start_time + '.')
 			self._loop.run_forever()
-				
-		# Catched!
+			
+		# In case of Skype on 80 port, access denials and other socket errors:
 		except OSError:
 			log.error('OS error, probably server is already running at that port.')
 	
 	# Stop?
 	def stop(self):
+		""" Stops the Perver. """
 		self._server.close()
 		self._loop.stop()
 			
-	# Main handler:
+	# HTTP request handler:
 	@asyncio.coroutine
 	def handler(self, reader, writer):
 		try:
