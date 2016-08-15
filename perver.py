@@ -8,6 +8,7 @@ from urllib.parse import unquote
 from mimetypes import guess_type
 from traceback import format_exc
 from functools import wraps
+import threading as thread
 import concurrent.futures
 import logging as log
 import asyncio
@@ -25,8 +26,8 @@ __version__ = '0.25'
 
 # Custom internal exceptions:
 class PerverException(Exception):
-	def __init__(self, error):
-		self.error = str(error)
+	def __init__(self, message):
+		self.message = str(message)
 
 
 # Handling HTTP requests:
@@ -147,7 +148,7 @@ class PerverHandler:
 			
 		# Terminator:
 		except killer as exception:
-			log.info(client_info + ' ' + exception.error)
+			log.info(client_info + ' ' + exception.message)
 			
 	# Sending file:
 	@asyncio.coroutine
@@ -368,8 +369,13 @@ class PerverHandler:
 			header_decoded = header_raw.decode(self.server.encoding)
 		
 			# Three basic values: request type, path and version:
-			pattern = '^(GET|POST) ([A-Za-z0-9_.-~?&%]+) (HTTP/1.1|HTTP/1.0)'
-			type, path, version = re.findall(pattern, header_decoded)[0]
+			pattern = r'^(GET|POST) ([A-Za-z0-9_.~?&%/\-]+) (HTTP/1.1|HTTP/1.0)'
+			unpacked = re.findall(pattern, header_decoded)
+			if len(unpacked) > 0:
+				type, path, version = re.findall(pattern, header_decoded)[0]
+			else:
+				raise PerverException('WRONG CLIENT HEAD')
+				
 			
 			# Splitting GET and PATH:
 			if '?' in path:
@@ -658,6 +664,15 @@ class Perver:
 		except:
 			log.warning('Exception caught! \r\n' + format_exc())
 			
+			
+# Pythonic async database
+class PerverDB:
+	
+	# Initialization:
+	def __init__(self, filename):
+		pass
+			
+	
 # Not standalone:
 if __name__ == '__main__':
 	print('Perver is not a standalone application. Use it as framework.')
