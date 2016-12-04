@@ -637,7 +637,8 @@ class Perver:
 			
 		# In case of Skype on 80 port, access denials and other socket errors:
 		except OSError:
-			log.error('OS error, probably server is already running at that port.')
+			log.error('OS error, probably server is already running at that port \
+			           or user is not sudoer.')
 	
 	# Stop?
 	def stop(self):
