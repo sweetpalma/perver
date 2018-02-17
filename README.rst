@@ -8,9 +8,9 @@ Perver - small async Python http-server with embedded framework, based on asynci
 
 Perver is open sourced. See the `LICENSE <https://raw.githubusercontent.com/SweetPalma/Perver/master/LICENSE>`_ file for more information.
 
-===========================
-Perver: Async Web Framework
-===========================
+==============================
+🐍 Perver: Async Web Framework 
+==============================
 
 Perver is a small experimental web-framework with embedded async server. You just `download it <https://raw.githubusercontent.com/SweetPalma/Perver/master/perver.py>`_, include it and run it. And it just works - no other dependencies but Python Standart Library. Sounds easy? Take a look at example then:
 
